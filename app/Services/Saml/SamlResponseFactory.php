@@ -12,6 +12,10 @@ use RobRichards\XMLSecLibs\XMLSecurityKey;
 
 class SamlResponseFactory
 {
+    private const SAML_ASSERTION_NS = 'urn:oasis:names:tc:SAML:2.0:assertion';
+
+    private const SAML_PROTOCOL_NS = 'urn:oasis:names:tc:SAML:2.0:protocol';
+
     public function makeBase64Response(User $user, ServiceProvider $provider, ?string $inResponseTo = null): string
     {
         $now = now()->utc();
@@ -23,8 +27,8 @@ class SamlResponseFactory
         $document = new DOMDocument('1.0', 'UTF-8');
         $document->formatOutput = false;
 
-        $response = $document->createElementNS('urn:oasis:names:tc:SAML:2.0:protocol', 'samlp:Response');
-        $response->setAttribute('xmlns:saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
+        $response = $this->samlpElement($document, 'Response');
+        $response->setAttribute('xmlns:saml', self::SAML_ASSERTION_NS);
         $response->setAttribute('ID', $responseId);
         $response->setAttribute('Version', '2.0');
         $response->setAttribute('IssueInstant', $now->toIso8601ZuluString());
@@ -34,30 +38,30 @@ class SamlResponseFactory
         }
         $document->appendChild($response);
 
-        $response->appendChild($this->element($document, 'saml:Issuer', $issuer));
+        $response->appendChild($this->samlElement($document, 'Issuer', $issuer));
 
-        $status = $document->createElement('samlp:Status');
-        $statusCode = $document->createElement('samlp:StatusCode');
+        $status = $this->samlpElement($document, 'Status');
+        $statusCode = $this->samlpElement($document, 'StatusCode');
         $statusCode->setAttribute('Value', 'urn:oasis:names:tc:SAML:2.0:status:Success');
         $status->appendChild($statusCode);
         $response->appendChild($status);
 
-        $assertion = $document->createElement('saml:Assertion');
+        $assertion = $this->samlElement($document, 'Assertion');
         $assertion->setAttribute('ID', $assertionId);
         $assertion->setAttribute('Version', '2.0');
         $assertion->setAttribute('IssueInstant', $now->toIso8601ZuluString());
         $response->appendChild($assertion);
 
-        $assertion->appendChild($this->element($document, 'saml:Issuer', $issuer));
+        $assertion->appendChild($this->samlElement($document, 'Issuer', $issuer));
 
-        $subject = $document->createElement('saml:Subject');
-        $nameId = $this->element($document, 'saml:NameID', $user->email);
+        $subject = $this->samlElement($document, 'Subject');
+        $nameId = $this->samlElement($document, 'NameID', $user->email);
         $nameId->setAttribute('Format', 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress');
         $subject->appendChild($nameId);
 
-        $confirmation = $document->createElement('saml:SubjectConfirmation');
+        $confirmation = $this->samlElement($document, 'SubjectConfirmation');
         $confirmation->setAttribute('Method', 'urn:oasis:names:tc:SAML:2.0:cm:bearer');
-        $confirmationData = $document->createElement('saml:SubjectConfirmationData');
+        $confirmationData = $this->samlElement($document, 'SubjectConfirmationData');
         $confirmationData->setAttribute('Recipient', $provider->acs_url);
         $confirmationData->setAttribute('NotOnOrAfter', $expiresAt->toIso8601ZuluString());
         if ($inResponseTo) {
@@ -67,35 +71,35 @@ class SamlResponseFactory
         $subject->appendChild($confirmation);
         $assertion->appendChild($subject);
 
-        $conditions = $document->createElement('saml:Conditions');
+        $conditions = $this->samlElement($document, 'Conditions');
         $conditions->setAttribute('NotBefore', $now->copy()->subMinute()->toIso8601ZuluString());
         $conditions->setAttribute('NotOnOrAfter', $expiresAt->toIso8601ZuluString());
-        $audienceRestriction = $document->createElement('saml:AudienceRestriction');
-        $audienceRestriction->appendChild($this->element($document, 'saml:Audience', $provider->entity_id));
+        $audienceRestriction = $this->samlElement($document, 'AudienceRestriction');
+        $audienceRestriction->appendChild($this->samlElement($document, 'Audience', $provider->entity_id));
         $conditions->appendChild($audienceRestriction);
         $assertion->appendChild($conditions);
 
-        $authnStatement = $document->createElement('saml:AuthnStatement');
+        $authnStatement = $this->samlElement($document, 'AuthnStatement');
         $authnStatement->setAttribute('AuthnInstant', $now->toIso8601ZuluString());
         $authnStatement->setAttribute('SessionIndex', $responseId);
-        $authnContext = $document->createElement('saml:AuthnContext');
-        $authnContext->appendChild($this->element(
+        $authnContext = $this->samlElement($document, 'AuthnContext');
+        $authnContext->appendChild($this->samlElement(
             $document,
-            'saml:AuthnContextClassRef',
+            'AuthnContextClassRef',
             'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport',
         ));
         $authnStatement->appendChild($authnContext);
         $assertion->appendChild($authnStatement);
 
-        $attributeStatement = $document->createElement('saml:AttributeStatement');
+        $attributeStatement = $this->samlElement($document, 'AttributeStatement');
         foreach ($this->attributesFor($user, $provider) as $name => $value) {
             if ($value === null || $value === '') {
                 continue;
             }
 
-            $attribute = $document->createElement('saml:Attribute');
+            $attribute = $this->samlElement($document, 'Attribute');
             $attribute->setAttribute('Name', $name);
-            $attribute->appendChild($this->element($document, 'saml:AttributeValue', (string) $value));
+            $attribute->appendChild($this->samlElement($document, 'AttributeValue', (string) $value));
             $attributeStatement->appendChild($attribute);
         }
         $assertion->appendChild($attributeStatement);
@@ -154,10 +158,20 @@ class SamlResponseFactory
         return [$path, true];
     }
 
-    private function element(DOMDocument $document, string $name, string $value): \DOMElement
+    private function samlElement(DOMDocument $document, string $name, ?string $value = null): DOMElement
     {
-        $element = $document->createElement($name);
-        $element->appendChild($document->createTextNode($value));
+        $element = $document->createElementNS(self::SAML_ASSERTION_NS, 'saml:'.$name);
+
+        if ($value !== null) {
+            $element->appendChild($document->createTextNode($value));
+        }
+
+        return $element;
+    }
+
+    private function samlpElement(DOMDocument $document, string $name): DOMElement
+    {
+        $element = $document->createElementNS(self::SAML_PROTOCOL_NS, 'samlp:'.$name);
 
         return $element;
     }
