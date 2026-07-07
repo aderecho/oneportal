@@ -104,11 +104,14 @@ class SamlResponseFactory
         }
         $assertion->appendChild($attributeStatement);
 
-        return base64_encode($this->signResponse($document, $response));
+        return base64_encode($this->signResponse($document));
     }
 
-    private function signResponse(DOMDocument $document, DOMElement $response): string
+    private function signResponse(DOMDocument $document): string
     {
+        $document->loadXML($document->saveXML());
+        $response = $document->documentElement;
+
         [$privateKey, $privateKeyIsFile] = $this->signingMaterial(
             (string) config('services.saml.signing_private_key', ''),
             (string) config('services.saml.signing_private_key_path', storage_path('saml/certs/sp-private.key')),
