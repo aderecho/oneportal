@@ -24,9 +24,10 @@ class SamlSsoController extends Controller
         $authnRequest = $this->decodeAuthnRequest((string) $request->query('SAMLRequest', ''));
         $issuer = $this->extractIssuer($authnRequest);
         $requestId = $this->extractRequestId($authnRequest);
+        $normalizedIssuer = $this->normalizeEntityId($issuer);
 
         $provider = ServiceProvider::query()
-            ->where('entity_id', $issuer)
+            ->whereIn('entity_id', array_unique([$issuer, $normalizedIssuer]))
             ->where('is_active', true)
             ->firstOrFail();
 
@@ -35,11 +36,14 @@ class SamlSsoController extends Controller
 
         abort_unless($this->userCanLaunch($user, $provider), 403);
 
+        $responseProvider = clone $provider;
+        $responseProvider->entity_id = $issuer;
+
         return response()->view('saml.post', [
             'acsUrl' => $provider->acs_url,
             'provider' => $provider,
             'relayState' => $request->query('RelayState', $provider->default_relay_state),
-            'samlResponse' => $samlResponseFactory->makeBase64Response($user, $provider, $requestId),
+            'samlResponse' => $samlResponseFactory->makeBase64Response($user, $responseProvider, $requestId),
         ]);
     }
 
@@ -73,6 +77,11 @@ class SamlSsoController extends Controller
         $id = (string) $document->documentElement?->getAttribute('ID');
 
         return $id !== '' ? $id : null;
+    }
+
+    private function normalizeEntityId(string $entityId): string
+    {
+        return preg_replace('#(?<!:)//+#', '/', $entityId) ?? $entityId;
     }
 
     private function loadXml(string $xml): DOMDocument

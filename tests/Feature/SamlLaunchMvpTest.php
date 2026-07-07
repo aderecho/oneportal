@@ -103,6 +103,46 @@ XML;
         $this->assertStringContainsString('<saml:Audience>http://localhost:8000/saml2/metadata</saml:Audience>', $xml);
     }
 
+    public function test_sp_initiated_sso_accepts_normalized_issuer_match(): void
+    {
+        config(['app.url' => 'https://ams.upcebu.edu.ph']);
+
+        $user = User::factory()->superAdmin()->create([
+            'email' => 'person@example.test',
+            'name' => 'Portal Person',
+        ]);
+        ServiceProvider::factory()->create([
+            'name' => 'FMS',
+            'slug' => 'fms',
+            'entity_id' => 'https://fms.upcebu.edu.ph/saml2/metadata',
+            'acs_url' => 'https://fms.upcebu.edu.ph/saml2/acs',
+        ]);
+
+        $requestId = '_fms-request-1';
+        $issuer = 'https://fms.upcebu.edu.ph//saml2/metadata';
+        $issueInstant = now()->utc()->format('Y-m-d\TH:i:s\Z');
+        $authnRequest = <<<XML
+<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="{$requestId}" Version="2.0" IssueInstant="{$issueInstant}" Destination="https://ams.upcebu.edu.ph/saml2/sso" AssertionConsumerServiceURL="https://fms.upcebu.edu.ph/saml2/acs" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{$issuer}</saml:Issuer>
+</samlp:AuthnRequest>
+XML;
+
+        $html = $this->actingAs($user)
+            ->get('/saml2/sso?'.http_build_query([
+                'SAMLRequest' => base64_encode(gzdeflate($authnRequest)),
+                'RelayState' => '/MainDashboard',
+            ]))
+            ->assertOk()
+            ->assertSee('action="https://fms.upcebu.edu.ph/saml2/acs"', false)
+            ->getContent();
+
+        preg_match('/name="SAMLResponse" value="([^"]+)"/', $html, $matches);
+        $xml = base64_decode(html_entity_decode($matches[1]));
+
+        $this->assertStringContainsString('InResponseTo="'.$requestId.'"', $xml);
+        $this->assertStringContainsString('<saml:Audience>'.$issuer.'</saml:Audience>', $xml);
+    }
+
     public function test_unassigned_user_cannot_open_sso_launch_route(): void
     {
         $user = User::factory()->create();
