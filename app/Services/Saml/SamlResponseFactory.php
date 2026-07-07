@@ -5,7 +5,10 @@ namespace App\Services\Saml;
 use App\Models\ServiceProvider;
 use App\Models\User;
 use DOMDocument;
+use DOMElement;
 use Illuminate\Support\Str;
+use RobRichards\XMLSecLibs\XMLSecurityDSig;
+use RobRichards\XMLSecLibs\XMLSecurityKey;
 
 class SamlResponseFactory
 {
@@ -97,7 +100,58 @@ class SamlResponseFactory
         }
         $assertion->appendChild($attributeStatement);
 
-        return base64_encode($document->saveXML());
+        return base64_encode($this->signResponse($document, $response));
+    }
+
+    private function signResponse(DOMDocument $document, DOMElement $response): string
+    {
+        [$privateKey, $privateKeyIsFile] = $this->signingMaterial(
+            (string) config('services.saml.signing_private_key', ''),
+            (string) config('services.saml.signing_private_key_path', storage_path('saml/certs/sp-private.key')),
+            'private key'
+        );
+        [$certificate, $certificateIsFile] = $this->signingMaterial(
+            (string) config('services.saml.signing_public_cert', ''),
+            (string) config('services.saml.signing_public_cert_path', storage_path('saml/certs/sp-public.crt')),
+            'public certificate'
+        );
+
+        $issuer = null;
+        foreach ($response->childNodes as $child) {
+            if ($child instanceof DOMElement && $child->localName === 'Issuer') {
+                $issuer = $child;
+                break;
+            }
+        }
+
+        $signature = new XMLSecurityDSig();
+        $signature->setCanonicalMethod(XMLSecurityDSig::EXC_C14N);
+        $signature->addReference(
+            $response,
+            XMLSecurityDSig::SHA256,
+            ['http://www.w3.org/2000/09/xmldsig#enveloped-signature', XMLSecurityDSig::EXC_C14N],
+            ['id_name' => 'ID', 'force_uri' => true]
+        );
+
+        $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
+        $key->loadKey($privateKey, $privateKeyIsFile);
+
+        $signature->sign($key);
+        $signature->add509Cert($certificateIsFile ? (string) file_get_contents($certificate) : $certificate, true, false);
+        $signature->insertSignature($response, $issuer?->nextSibling);
+
+        return $document->saveXML();
+    }
+
+    private function signingMaterial(string $inlinePem, string $path, string $label): array
+    {
+        if ($inlinePem !== '') {
+            return [$inlinePem, false];
+        }
+
+        throw_unless(is_readable($path), new \RuntimeException("SAML signing {$label} is not readable at {$path}."));
+
+        return [$path, true];
     }
 
     private function element(DOMDocument $document, string $name, string $value): \DOMElement

@@ -37,6 +37,10 @@ return [
 
     'saml' => [
         'idp_public_cert' => env('SAML_IDP_PUBLIC_CERT', ''),
+        'signing_private_key' => env('SAML_SIGNING_PRIVATE_KEY', ''),
+        'signing_public_cert' => env('SAML_SIGNING_PUBLIC_CERT', ''),
+        'signing_private_key_path' => env('SAML_SIGNING_PRIVATE_KEY_PATH', storage_path('saml/certs/sp-private.key')),
+        'signing_public_cert_path' => env('SAML_SIGNING_PUBLIC_CERT_PATH', storage_path('saml/certs/sp-public.crt')),
     ],
 
 ];
